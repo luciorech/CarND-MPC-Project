@@ -44,7 +44,8 @@ double polyeval(Eigen::VectorXd coeffs, double x) {
 // Fit a polynomial.
 // Adapted from
 // https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
-Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
+Eigen::VectorXd polyfit(Eigen::VectorXd xvals,
+                        Eigen::VectorXd yvals,
                         int order) {
   assert(xvals.size() == yvals.size());
   assert(order >= 1 && order <= xvals.size() - 1);
@@ -68,10 +69,22 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
 int main() {
   uWS::Hub h;
 
-  // MPC is initialized here!
-  MPC mpc;
 
-  h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  // This value assumes the model presented in the classroom is used.
+  //
+  // It was obtained by measuring the radius formed by running the vehicle in the
+  // simulator around in a circle with a constant steering angle and velocity on a
+  // flat terrain.
+  //
+  // Lf was tuned until the the radius formed by the simulating the model
+  // presented in the classroom matched the previous radius.
+  //
+  // This is the length from front to CoG that has a similar radius.
+  const double Lf = 2.67;
+  const int LATENCY = 100; // in miliseconds
+
+  MPC mpc(Lf);
+  h.onMessage([&mpc, LATENCY](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -91,45 +104,76 @@ int main() {
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
+          double steer = j[1]["steering_angle"];
+          double throttle = j[1]["throttle"];
 
-          /*
-          * TODO: Calculate steering angle and throttle using MPC.
-          *
-          * Both are in between [-1, 1].
-          *
-          */
-          double steer_value;
-          double throttle_value;
+          // To take latency into account
+          // we predict what the state will be at the time
+          // the actuators are actually applied the car (current time + latency)
+          double latency_in_s = LATENCY / 1000.0;
+          double pred_psi = psi + (((v * steer) / mpc.Lf()) * latency_in_s) - psi;          
+          double pred_x = px + (v * cos(-pred_psi) * latency_in_s) - px;
+          double pred_y = py + (v * sin(-pred_psi) * latency_in_s) - py;
+          double pred_v = v + (throttle * latency_in_s);
+          
+          // Transform to vehicle coordinates
+          Eigen::VectorXd xvals(ptsx.size());
+          Eigen::VectorXd yvals(ptsy.size());
+          for (size_t i = 0; i < ptsx.size(); i++) {
+            const double dx = ptsx[i] - px;
+            const double dy = ptsy[i] - py;
+            xvals[i] = (dx * cos(0 - psi)) - (dy * sin(0 - psi));
+            yvals[i] = (dx * sin(0 - psi)) + (dy * cos(0 - psi));
+          }
 
-          json msgJson;
+          // Calculate 3rd order polynomial coefficients
+          Eigen::VectorXd coeffs = polyfit(xvals, yvals, 3);
+
+          // Cross-track and psi error
+          double cte = polyeval(coeffs, 0);
+          // This is the same as below, when px = 0, py = 0, psi = 0
+          double epsi = -atan(coeffs[1]);
+          //double epsi = psi - atan(coeffs[1] + (2 * coeffs[2] * px) + (3 * coeffs[3] * (px*px)));
+          
+          Eigen::VectorXd state(6);
+          state << pred_x, pred_y, pred_psi, pred_v, cte, epsi;
+
+          // Call MPC, get new values for steering and throttle
+          auto actuators = mpc.Solve(state, coeffs);
+
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
           // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
-          msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = throttle_value;
-
-          //Display the MPC predicted trajectory 
-          vector<double> mpc_x_vals;
-          vector<double> mpc_y_vals;
+          double mpc_steering_angle = (actuators[0] / (deg2rad(25.0) * mpc.Lf()));
+          double mpc_throttle = actuators[1];
+          std::cout << "steer = " << mpc_steering_angle << "\n";
+          std::cout << "throttle = " << mpc_throttle << "\n";
+          json msgJson;
+          msgJson["steering_angle"] = mpc_steering_angle;
+          msgJson["throttle"] = mpc_throttle;
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
-
-          msgJson["mpc_x"] = mpc_x_vals;
-          msgJson["mpc_y"] = mpc_y_vals;
+          msgJson["mpc_x"] = mpc.pred_x;
+          msgJson["mpc_y"] = mpc.pred_y;
 
           //Display the waypoints/reference line
           vector<double> next_x_vals;
           vector<double> next_y_vals;
+          double poly_inc = 2.5;
+          int num_points = 10;
+          for (int i = 1; i < num_points; ++i) {
+            next_x_vals.push_back(poly_inc * i);
+            next_y_vals.push_back(polyeval(coeffs, poly_inc * i));
+          }
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
-
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
 
-
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-          std::cout << msg << std::endl;
+          // std::cout << msg << std::endl;
+          
           // Latency
           // The purpose is to mimic real driving conditions where
           // the car does actuate the commands instantly.
@@ -139,7 +183,7 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(100));
+          this_thread::sleep_for(chrono::milliseconds(LATENCY));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
