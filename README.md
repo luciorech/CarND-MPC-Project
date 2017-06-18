@@ -3,6 +3,121 @@ Self-Driving Car Engineer Nanodegree Program
 
 ---
 
+## Model Predictive Control
+
+The goal for this project is to implement a Model Predictive Controller (MPC)
+to determine throttle/braking and steering values to successfully 
+drive a car around Udacity's simulator track. 
+An MPC relies on a model, a cost function and a time window (time slots). 
+Its objective is to minimize the cost for the entirety of time slots. 
+ 
+### Kinematic Model
+ 
+In this project, we're describing the car using the kinematic model. The 
+state vector for this model is comprised of four elements: x coordinate, 
+y coordinate, orientation (psi) and velocity (v). Besides these four 
+elements, our model also keeps track of the cross track error (how far 
+the car is from the target position) and the orientation error (the 
+difference between the target orientation and current orientation). 
+The update equations for all of these elements are below:
+ 
+    x_[t+1] = x[t] + v[t] * cos(psi[t]) * dt
+    y_[t+1] = y[t] + v[t] * sin(psi[t]) * dt
+    psi_[t+1] = psi[t] + v[t] / Lf * delta[t] * dt
+    v_[t+1] = v[t] + a[t] * dt
+    cte[t+1] = f(x[t]) - y[t] + v[t] * sin(epsi[t]) * dt
+    epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
+
+, where psides is the 'desired psi', the tangential angle of the desired 
+trajectory evaluated at x[t].
+
+The goal of our MPC is to determine steering angle and 
+throttle value for the car (a negative throttle is the equivalent of 
+braking) that minimize the total cost function.
+
+### Waypoints and coordinate transform
+
+In order to determine appropriate values for the actuators, it's first 
+necessary to know what's the intended trajectory for the car. This is 
+given by the simulator as a set of waypoints in map coordinates. In order 
+to ease the process of determining actuator values, we first convert 
+the waypoints to car coordinates. Considering that the car position is at 
+the origin of its coordinate system and that the current car orientation 
+determines the position for the x axis (so that the y axis is to the 
+left of the car), we can use the following equations for the 
+coordinates transformation:
+
+    delta_x = waypoint_x_map - car_x_map
+    delta_y = waypoint_y_map - car_y_map
+    waypoint_x_car = (delta_x * cos(0 - psi)) - (delta_y * sin(0 - psi))
+    waypoint_y_car = (delta_x * sin(0 - psi)) + (delta_y * cos(0 - psi))
+
+I then fit a 3rd order polynomial to the transformed waypoints. This 
+polynomial is the intended trajectory for the car.
+
+### Cost function and how much to look into the future
+
+Prior to running the linear optimizer one must define what to optimize. I 
+opted for a cost function that takes into account 7 elements:
+
+* Cross track error
+* Orientation error
+* Difference between reference velocity (90/MPH) and current velocity
+* How much the car is steering
+* How much the car is accelerating/braking
+* Delta between previous and current steering
+* Delta between previous and current throttle
+
+Each of these items are meant to make the car trajectory smooth, maximize 
+speed and keep the car close to the intended trajectory. Tuning these 
+parameters (each is multiplied by an individual cost factor) was an 
+empirical process - it's very interesting to observe how each of these 
+cost elements impact driving quality in the simulator. 
+The selected cost for each element can be seen on the MPC class.
+ 
+Another element to tune is how many actuation points are used by the  
+optimizer and how far apart these points are. This is controlled by 
+parameters <code>N</code> and <code>dt</code>, respectively. If both are fixed, then the distance 
+for which actuators are predicted and optimized is variable. I decided, 
+instead, to apply a fixed distance of 15 meters and to use 12 actuation 
+points. Therefore, <code>dt</code> depends on the car's current speed.
+
+### Latency
+
+The last element to take into account in the MPC is how to deal with 
+latency. There's a time gap between sending new steering angle and throttle 
+values to the car and having these values transmitted to the engine and 
+wheels (100ms in this specific project). One way to deal with this problem 
+is to manipulate the state vector that serves as input for MPC. By 
+calculating what x, y, orientation and velocity will be at the time the 
+actuators impact the car, we can approximate what it would be to drive 
+without actuators latency. Latency equations are below (notice that 
+some elements of the equation are cancelled out by the coordinate 
+transform and are there only to completely illustrate the formulae):
+
+    pred_psi = psi + (((v * steer) / mpc.Lf()) * latency_in_s) - psi;          
+    pred_x = px + (v * cos(-pred_psi) * latency_in_s) - px;
+    pred_y = py + (v * sin(-pred_psi) * latency_in_s) - py;
+    pred_v = v + (current_throttle * latency_in_s);
+
+
+### Results
+
+With all that applied to the MPC, the car can successfully drive at 
+an average of approximately 60/MPH. There are still several improvements 
+that coulde be made. For instance, the car has a tendency of 
+applying the brakes at the end of a curve, when it's generally better to 
+do so prior to entering the curve. Choosing a different model for the car 
+or further tuning the cost function could improve the results. 
+Another option for tuning the cost function is to use a gradient ascent 
+method - convergence time might be a problem, however, given how many 
+parameters are available. Modifying the number of actuation points also 
+has an enormous impact in driving. Right now it is a fixed value but 
+it might be beneficial to use more or less points depending on the region 
+the car is driving (curved/straight road, fast/slow speeds).
+
+---
+
 ## Dependencies
 
 * cmake >= 3.5
