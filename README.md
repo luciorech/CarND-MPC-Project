@@ -44,13 +44,13 @@ to ease the process of determining actuator values, we first convert
 the waypoints to car coordinates. Considering that the car position is at 
 the origin of its coordinate system and that the current car orientation 
 determines the position for the x axis (so that the y axis is to the 
-left of the car), we can use the following equations for the 
+right of the car), we can use the following equations for the 
 coordinates transformation:
 
     delta_x = waypoint_x_map - car_x_map
     delta_y = waypoint_y_map - car_y_map
-    waypoint_x_car = (delta_x * cos(0 - psi)) - (delta_y * sin(0 - psi))
-    waypoint_y_car = (delta_x * sin(0 - psi)) + (delta_y * cos(0 - psi))
+    waypoint_x_car = (delta_x * cos(psi)) + (delta_y * sin(psi))
+    waypoint_y_car = (delta_y * cos(psi)) - (delta_x * sin(psi))
 
 I then fit a 3rd order polynomial to the transformed waypoints. This 
 polynomial is the intended trajectory for the car.
@@ -90,27 +90,25 @@ values to the car and having these values transmitted to the engine and
 wheels (100ms in this specific project). One way to deal with this problem 
 is to manipulate the state vector that serves as input for MPC. By 
 calculating what x, y, orientation and velocity will be at the time the 
-actuators impact the car, we can approximate what it would be to drive 
-without actuators latency. Latency equations are below (notice that 
-some elements of the equation are cancelled out by the coordinate 
-transform and are there only to completely illustrate the formulae):
+actuators impact the car and updating the errors in the same way, 
+we can approximate what it would be to drive 
+without actuators latency. Latency update equations are below:
 
-    pred_psi = psi + (((v * steer) / mpc.Lf()) * latency_in_s) - psi;          
-    pred_x = px + (v * cos(-pred_psi) * latency_in_s) - px;
-    pred_y = py + (v * sin(-pred_psi) * latency_in_s) - py;
-    pred_v = v + (current_throttle * latency_in_s);
+     psi_t1 = (v_t0 / mpc.Lf()) * steer * dt          
+     x_t1 = x_t0 + v * cos(psi_t0) * dt
+     y_t1 = v_t0 * sin(psi_t0) * dt
+     v_t1 = v_t0 + throttle * dt
+     epsi_t1 = epsi_t0 + (v_t0 / mpc.Lf()) * steer * dt
+     cte_t1 = fx(t0) + v_t0 * sin(epsi_t0) * dt
 
 
 ### Results
 
 With all that applied to the MPC, the car can successfully drive at 
-an average of approximately 60/MPH. There are still several improvements 
-that coulde be made. For instance, the car has a tendency of 
-applying the brakes at the end of a curve, when it's generally better to 
-do so prior to entering the curve. Choosing a different model for the car 
-or further tuning the cost function could improve the results. 
-Another option for tuning the cost function is to use a gradient ascent 
-method - convergence time might be a problem, however, given how many 
+an average of approximately 60/MPH. Some improvements 
+are still to be made. For further tuning the cost function, 
+a method like gradient ascent could be used - convergence time 
+might be a problem, however, given how many 
 parameters are available. Modifying the number of actuation points also 
 has an enormous impact in driving. Right now it is a fixed value but 
 it might be beneficial to use more or less points depending on the region 
