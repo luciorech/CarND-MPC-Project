@@ -6,9 +6,9 @@
 using CppAD::AD;
 
 // Number of predicted points
-int N = 12;
-// Reference velocity
-double ref_v = 90.0;
+int N = 10;
+// Reference velocity in m/s
+double ref_v = 50.0 * 0.44704;
 
 // Indices for vars array
 int x_start = 0;
@@ -21,13 +21,13 @@ int steer_start = epsi_start + N;
 int a_start = steer_start + N - 1;
 
 // Cost factors for cost function
-double cte_factor = 3000;
-double epsi_factor = 10000;
-double v_factor = 0.35;
-double steer_factor = 200;
+double cte_factor = 1000;
+double epsi_factor = 2000;
+double v_factor = 1.0;
+double steer_factor = 5;
 double a_factor = 5;
-double delta_steer_factor = 300;
-double delta_a_factor = 40;
+double delta_steer_factor = 1000;
+double delta_a_factor = 5;
 
 class FG_eval {
  public:
@@ -125,7 +125,7 @@ class FG_eval {
       // epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
       fg[2 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt_);
       fg[2 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt_);
-      fg[2 + psi_start + t] = psi1 - (psi0 - v0 * delta0 / Lf_ * dt_);
+      fg[2 + psi_start + t] = psi1 - (psi0 + v0 * delta0 / Lf_ * dt_);
       fg[2 + v_start + t] = v1 - (v0 + a0 * dt_);
       fg[2 + cte_start + t] = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt_));
       fg[2 + epsi_start + t] = epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf_ * dt_);
@@ -181,8 +181,8 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // degrees (values in radians).
   // NOTE: Feel free to change this to something else.
   for (int i = steer_start; i < a_start; i++) {
-    vars_lowerbound[i] = -0.436332 * Lf_;
-    vars_upperbound[i] = 0.436332 * Lf_;
+    vars_lowerbound[i] = -0.436332;
+    vars_upperbound[i] = 0.436332;
   }
 
   // Acceleration/decceleration upper and lower limits.
@@ -218,7 +218,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // Defining dt based on current speed in m/s
   // Trying to predict m_predict meters ahead
   int m_predict = 15;
-  double dt = (v > 10) ? m_predict / (N * v * 0.44704) : 0.1;
+  double dt = (v > 10) ? m_predict / (N * v) : 0.1;
   FG_eval fg_eval(coeffs, dt, Lf_);
 
   //

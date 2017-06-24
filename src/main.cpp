@@ -104,46 +104,56 @@ int main() {
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
+          v *= 0.44704; // In m/s instead of mph
           double steer = j[1]["steering_angle"];
+          // Simulator steering should be inverted to match the selected car coordinates
+          steer *= -1;
           double throttle = j[1]["throttle"];
-
-          // To take latency into account
-          // we predict what the state will be at the time
-          // the actuators are actually applied the car (current time + latency)
-          double latency_in_s = LATENCY / 1000.0;
-          double pred_psi = psi + (((v * steer) / mpc.Lf()) * latency_in_s) - psi;          
-          double pred_x = px + (v * cos(-pred_psi) * latency_in_s) - px;
-          double pred_y = py + (v * sin(-pred_psi) * latency_in_s) - py;
-          double pred_v = v + (throttle * latency_in_s);
-          
-          // Transform to vehicle coordinates
+          // std::cout << "Sim. steer = " << steer << "\n";
+          // std::cout << "Sim. throttle = " << throttle << "\n";
+           
+          // Transform waypoints to vehicle coordinates
           Eigen::VectorXd xvals(ptsx.size());
           Eigen::VectorXd yvals(ptsy.size());
           for (size_t i = 0; i < ptsx.size(); i++) {
             const double dx = ptsx[i] - px;
             const double dy = ptsy[i] - py;
-            xvals[i] = (dx * cos(0 - psi)) - (dy * sin(0 - psi));
-            yvals[i] = (dx * sin(0 - psi)) + (dy * cos(0 - psi));
+            xvals[i] = (dx * cos(psi)) + (dy * sin(psi));
+            yvals[i] = (dy * cos(psi)) - (dx * sin(psi));
           }
 
           // Calculate 3rd order polynomial coefficients
           Eigen::VectorXd coeffs = polyfit(xvals, yvals, 3);
+          
+          // To take latency into account
+          // we predict what the state will be at the time
+          // the actuators are actually applied the car (current time + latency)
+          double latency_in_s = LATENCY / 1000.0;
+          double pred_psi = (v / mpc.Lf()) * steer * latency_in_s;          
+          double pred_x = v * cos(pred_psi) * latency_in_s;
+          double pred_y = v * sin(pred_psi) * latency_in_s;
+          double pred_v = v + (throttle * latency_in_s);
 
           // Cross-track and psi error
-          double cte = polyeval(coeffs, 0);
+          // epsi without latency update
           // This is the same as below, when px = 0, py = 0, psi = 0
+          // double epsi = psi - atan(coeffs[1] + (2 * coeffs[2] * px) + (3 * coeffs[3] * (px*px)));
           double epsi = -atan(coeffs[1]);
-          //double epsi = psi - atan(coeffs[1] + (2 * coeffs[2] * px) + (3 * coeffs[3] * (px*px)));
+          double cte = polyeval(coeffs, 0) - 0 + (v * sin(epsi) * latency_in_s);
+          // epsi latency update
+          epsi += (v / mpc.Lf()) * steer * latency_in_s;          
           
           Eigen::VectorXd state(6);
           state << pred_x, pred_y, pred_psi, pred_v, cte, epsi;
+
+          std::cout << "state = \n" << state << "\n";
 
           // Call MPC, get new values for steering and throttle
           auto actuators = mpc.Solve(state, coeffs);
 
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
           // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
-          double mpc_steering_angle = (actuators[0] / (deg2rad(25.0) * mpc.Lf()));
+          double mpc_steering_angle = (-actuators[0] / deg2rad(25.0));
           double mpc_throttle = actuators[1];
           std::cout << "steer = " << mpc_steering_angle << "\n";
           std::cout << "throttle = " << mpc_throttle << "\n";
@@ -160,7 +170,7 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
           double poly_inc = 2.5;
-          int num_points = 10;
+          int num_points = 25;
           for (int i = 1; i < num_points; ++i) {
             next_x_vals.push_back(poly_inc * i);
             next_y_vals.push_back(polyeval(coeffs, poly_inc * i));
